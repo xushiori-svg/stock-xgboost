@@ -9,6 +9,14 @@ improved <- read_csv("data/improved_preds.csv", show_col_types = FALSE)
 test_dates <- sort(unique(improved$date))
 cost_rate <- 0.001
 
+penn_colors <- c(
+  "Improved XGBoost" = "#990000",
+  "Original XGBoost" = "#011F5B",
+  "Momentum top 10" = "#82AFD3",
+  "Equal weight, all stocks" = "#7F7F7F",
+  "SPY" = "#000000"
+)
+
 rets <- monthly %>%
   filter(date %in% test_dates, !is.na(fwd_ret)) %>%
   select(symbol, date, fwd_ret)
@@ -99,7 +107,6 @@ metrics <- all_returns %>%
     ann_return_after_cost = prod(1 + net_ret)^(12 / n()) - 1,
     ann_volatility = sd(ret) * sqrt(12),
     sharpe = mean(ret) / sd(ret) * sqrt(12),
-    sharpe_class_formula = mean(ret) / sd(ret) * sqrt(252),
     max_drawdown = min(cumprod(1 + ret) / cummax(cumprod(1 + ret)) - 1),
     beta = coef(lm(ret ~ spy_ret))[2],
     alpha_ann = coef(lm(ret ~ spy_ret))[1] * 12,
@@ -143,23 +150,24 @@ write_csv(ic_summary, "results/ic_summary.csv")
 print(metrics %>% mutate(across(where(is.numeric), ~ round(.x, 3))), width = Inf)
 print(ic_summary %>% mutate(across(where(is.numeric), ~ round(.x, 3))))
 
+to_month <- function(d) floor_date(d, "month") %m+% months(1)
+start_month <- to_month(min(test_dates)) %m-% months(1)
+
 growth <- all_returns %>%
   arrange(date) %>%
   group_by(strategy) %>%
-  mutate(
-    month = floor_date(date, "month") %m+% months(1),
-    growth = cumprod(1 + ret)
-  ) %>%
-  ungroup()
+  mutate(month = to_month(date), growth = cumprod(1 + ret)) %>%
+  ungroup() %>%
+  select(strategy, month, growth)
 
-start_point <- growth %>%
-  distinct(strategy) %>%
-  mutate(month = min(growth$month) %m-% months(1), growth = 1)
+plot_data <- bind_rows(
+  growth %>% distinct(strategy) %>% mutate(month = start_month, growth = 1),
+  growth
+)
 
-plot_data <- bind_rows(start_point, growth %>% select(strategy, month, growth))
-
-p1 <- ggplot(plot_data, aes(month, growth, color = strategy)) +
-  geom_line(linewidth = 1) +
+p1 <- ggplot() +
+  geom_line(data = plot_data, aes(month, growth, color = strategy), linewidth = 1) +
+  scale_color_manual(values = penn_colors) +
   labs(
     title = "Growth of $1, February 2024 to October 2026",
     subtitle = "Top 10 stocks each month, held for one month, before trading costs",
@@ -173,11 +181,11 @@ p1 <- ggplot(plot_data, aes(month, growth, color = strategy)) +
 ggsave("results/fig1_growth.png", p1, width = 8, height = 5, dpi = 200)
 
 p2 <- ggplot(ic_monthly, aes(date, ic)) +
-  geom_col(fill = "steelblue") +
+  geom_col(fill = "#011F5B") +
   geom_hline(
     data = ic_summary,
     aes(yintercept = mean_ic),
-    color = "firebrick",
+    color = "#990000",
     linetype = "dashed"
   ) +
   facet_wrap(~ model, ncol = 1) +
